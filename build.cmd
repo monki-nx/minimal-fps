@@ -1,11 +1,27 @@
 @echo off
-rem Compila minimal-fps.exe con las Build Tools de Visual Studio 2022.
+rem Compila minimal-fps con Visual Studio 2022 (Build Tools o completo) y CMake.
+rem Resultado: build\Release\minimal-fps.exe
 setlocal
-set SDK=C:\Program Files\Intel\PresentMon\SDK
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -no_logo || exit /b 1
 cd /d "%~dp0"
-if not exist out mkdir out
-cl /nologo /O2 /EHsc /W3 /DUNICODE /D_UNICODE /std:c++17 /I"%SDK%" minimal-fps.cpp ^
-   /Fo:out\ /Fe:out\minimal-fps.exe /link /SUBSYSTEM:WINDOWS "%SDK%\PresentMonAPI2Loader.lib" || exit /b 1
-copy /y "%SDK%\PresentMonAPI2Loader.dll" out\ >nul
-echo OK: out\minimal-fps.exe
+
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+    echo No se encontro Visual Studio 2022. Instala "Build Tools for Visual Studio 2022" con el workload de C++.
+    exit /b 1
+)
+for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
+if not defined VSDIR (
+    echo No se encontro el toolset de C++ de Visual Studio 2022.
+    exit /b 1
+)
+call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=x64 -no_logo >nul || exit /b 1
+
+where cmake >nul 2>&1 || (
+    echo No se encontro cmake. Instala el componente "C++ CMake tools for Windows" de Visual Studio o CMake desde cmake.org.
+    exit /b 1
+)
+
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 || exit /b 1
+cmake --build build --config Release || exit /b 1
+echo.
+echo OK: build\Release\minimal-fps.exe

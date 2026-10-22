@@ -1,7 +1,8 @@
 # minimal-fps
 
-Visor mínimo de FPS y uso de hardware para Windows. Un solo ejecutable, texto
-plano siempre encima de la ventana activa, sin interfaz ni configuración.
+Visor mínimo de FPS y uso de hardware para Windows. Un solo ejecutable, sin
+instalar nada más: texto plano siempre encima de la ventana activa, sin
+interfaz ni archivos de configuración.
 
 ```
 FPS        91
@@ -11,25 +12,22 @@ CPU USE   41%
 ```
 
 Es una versión ligera basada en [Intel PresentMon](https://github.com/GameTechDev/PresentMon):
-usa su servicio como fuente de datos y reemplaza la interfaz por esta ventana.
-
-## Requisitos
-
-- Intel PresentMon instalado (`winget install Intel.PresentMon`). Su servicio
-  arranca solo con Windows; la aplicación de PresentMon no hace falta abrirla.
-- Para compilar: Visual Studio 2022 Build Tools con el workload de C++.
+incorpora su librería PresentData para contar frames por ETW y la combina con
+una ventana propia y lecturas directas de GPU (ADL en AMD, NVML en NVIDIA) y CPU.
 
 ## Uso
 
-Ejecuta `minimal-fps.exe`. Sigue a la ventana que tenga el foco, así que basta
-con abrir el juego.
+Ejecuta `minimal-fps.exe`. Pide permisos de administrador porque la captura de
+FPS usa una sesión ETW. Sigue a la ventana que tenga el foco, así que basta con
+abrir el juego.
 
 | Atajo      | Acción          |
 |------------|-----------------|
 | Ctrl+Alt+O | mostrar/ocultar |
 | Ctrl+Alt+Q | salir           |
 
-Para que arranque con Windows, crea un acceso directo en `shell:startup`.
+Para que arranque con Windows, crea una tarea programada con privilegios
+elevados o un acceso directo en `shell:startup`.
 
 ## Opciones
 
@@ -60,18 +58,33 @@ minimal-fps --no-cpu-use --size 18 --alpha 230
 minimal-fps --only fps,gpu-temp --color 00FF66 --pos 20,20 --refresh 1000
 ```
 
+Las filas de GPU se ocultan solas si el driver no expone el dato. Si no hay
+driver AMD ni NVIDIA, el uso de GPU se lee de los contadores de rendimiento de
+Windows y la temperatura no se muestra.
+
 ## Compilar
 
+Requisitos: Visual Studio 2022 (Build Tools o completo) con el workload
+"Desarrollo para el escritorio con C++" y CMake (incluido en el componente
+"C++ CMake tools for Windows").
+
 ```
+git clone https://github.com/monki-nx/minimal-fps.git
+cd minimal-fps
 build.cmd
 ```
 
-Genera `out\minimal-fps.exe` junto con `PresentMonAPI2Loader.dll`, que debe
-quedar en la misma carpeta que el ejecutable.
+Resultado: `build\Release\minimal-fps.exe`, sin dependencias fuera de Windows.
 
-`diag.cpp` lista los dispositivos y las métricas que el servicio ofrece en tu
-equipo. Útil si quieres agregar filas en `g_rows`.
+## Estructura
+
+```
+src/            ventana, línea de comandos, FPS por ETW, métricas de hardware
+third_party/    PresentData de Intel PresentMon y headers ADL de AMD (ver NOTICE.md)
+CMakeLists.txt  build con CMake + MSVC
+build.cmd       envoltorio que localiza Visual Studio y compila
+```
 
 ## Licencia
 
-MIT.
+MIT. El código de terceros conserva sus licencias, ver `third_party/NOTICE.md`.

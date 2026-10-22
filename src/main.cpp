@@ -1,6 +1,5 @@
-// minimal-fps - visor minimo de FPS y uso de hardware.
-// Usa el servicio de Intel PresentMon (ya instalado) como fuente de datos
-// y dibuja una ventana de texto plano siempre encima. Sin UI, sin config.
+// minimal-fps - visor mínimo de FPS y uso de hardware para Windows.
+// Un solo ejecutable, sin servicios ni dependencias instaladas.
 //
 // Atajos:  Ctrl+Alt+O  mostrar/ocultar      Ctrl+Alt+Q  salir
 //
@@ -8,30 +7,30 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
-#include <cstdint>
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
+#include <cstdint>
 #include <string>
-#include <vector>
-#include "PresentMonAPI.h"
 
-#pragma comment(lib, "PresentMonAPI2Loader.lib")
+#include "fps_tracker.h"
+#include "hw_metrics.h"
+
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
 
 namespace {
 
-// ---- ajustes por defecto (todos se pueden cambiar por linea de comandos) ----
-int          kRefreshMs = 2000;      // --refresh ms
-int          kFontPx    = 15;        // --size px
-std::wstring kFontName  = L"Consolas"; // --font nombre
-BYTE         kAlpha     = 190;       // --alpha 0-255
-COLORREF     kTextColor = RGB(255, 255, 255);  // --color RRGGBB
-COLORREF     kBackColor = RGB(0, 0, 0);        // --bg RRGGBB
-int          kPosX      = 8;         // --pos x,y
-int          kPosY      = 8;
-bool         kStartHidden = false;   // --hidden
+// ---- ajustes por defecto (todos se pueden cambiar por línea de comandos) ----
+int          kRefreshMs   = 2000;         // --refresh ms
+int          kFontPx      = 15;           // --size px
+std::wstring kFontName    = L"Consolas";  // --font nombre
+BYTE         kAlpha       = 190;          // --alpha 0-255
+COLORREF     kTextColor   = RGB(255, 255, 255);  // --color RRGGBB
+COLORREF     kBackColor   = RGB(0, 0, 0);        // --bg RRGGBB
+int          kPosX        = 8;            // --pos x,y
+int          kPosY        = 8;
+bool         kStartHidden = false;        // --hidden
 // -----------------------------------------------------------------------------
 
 const wchar_t* kHelp =
@@ -49,26 +48,34 @@ const wchar_t* kHelp =
     L"  --pos <x,y>         posicion en pantalla (defecto 8,8)\n"
     L"  --hidden            iniciar oculto (Ctrl+Alt+O para mostrar)\n"
     L"  --help              esta ayuda\n\n"
+    L"Requiere ejecutarse como administrador (captura de FPS por ETW).\n"
     L"Atajos: Ctrl+Alt+O mostrar/ocultar, Ctrl+Alt+Q salir";
 
 enum { IDT_POLL = 1, HK_TOGGLE = 1, HK_QUIT = 2, kRows = 4 };
+enum class Source { Fps, GpuUse, GpuTemp, CpuUse };
 
 struct Row {
-    const wchar_t* key;      // nombre en la linea de comandos
+    const wchar_t* key;      // nombre en la línea de comandos
     const wchar_t* label;
     const wchar_t* unit;
-    PM_METRIC      metric;
-    PM_DEVICE_TYPE dev;      // dispositivo que expone la metrica
-    bool           active;   // false si el servicio no ofrece la metrica
+    Source         source;
+    bool           active;
     double         value;
 };
 
 Row g_rows[kRows] = {
-    { L"fps",      L"FPS",      L"",   PM_METRIC_PRESENTED_FPS,   PM_DEVICE_TYPE_INDEPENDENT,      true, NAN },
-    { L"gpu-use",  L"GPU USE",  L"%",  PM_METRIC_GPU_UTILIZATION, PM_DEVICE_TYPE_GRAPHICS_ADAPTER, true, NAN },
-    { L"gpu-temp", L"GPU TEMP", L"C",  PM_METRIC_GPU_TEMPERATURE, PM_DEVICE_TYPE_GRAPHICS_ADAPTER, true, NAN },
-    { L"cpu-use",  L"CPU USE",  L"%",  PM_METRIC_CPU_UTILIZATION, PM_DEVICE_TYPE_SYSTEM,           true, NAN },
+    { L"fps",      L"FPS",      L"",  Source::Fps,     true, NAN },
+    { L"gpu-use",  L"GPU USE",  L"%", Source::GpuUse,  true, NAN },
+    { L"gpu-temp", L"GPU TEMP", L"C", Source::GpuTemp, true, NAN },
+    { L"cpu-use",  L"CPU USE",  L"%", Source::CpuUse,  true, NAN },
 };
+
+FpsTracker g_fps;
+HwMetrics  g_hw;
+uint32_t   g_pid     = 0;
+bool       g_visible = true;
+HWND       g_hwnd    = nullptr;
+HFONT      g_font    = nullptr;
 
 COLORREF ParseHexColor(const wchar_t* s, COLORREF fallback)
 {
@@ -106,13 +113,13 @@ bool ParseArgs()
             }
             handled = true;
         }
-        else if (a == L"--refresh") { if (auto v = next(i)) kRefreshMs = max(200, _wtoi(v)); handled = true; }
-        else if (a == L"--size")    { if (auto v = next(i)) kFontPx = max(6, _wtoi(v)); handled = true; }
+        else if (a == L"--refresh") { if (auto v = next(i)) kRefreshMs = (std::max)(200, _wtoi(v)); handled = true; }
+        else if (a == L"--size")    { if (auto v = next(i)) kFontPx = (std::max)(6, _wtoi(v)); handled = true; }
         else if (a == L"--font")    { if (auto v = next(i)) kFontName = v; handled = true; }
-        else if (a == L"--alpha")   { if (auto v = next(i)) kAlpha = BYTE(max(0, min(255, _wtoi(v)))); handled = true; }
+        else if (a == L"--alpha")   { if (auto v = next(i)) kAlpha = BYTE((std::max)(0, (std::min)(255, _wtoi(v)))); handled = true; }
         else if (a == L"--color")   { kTextColor = ParseHexColor(next(i), kTextColor); handled = true; }
         else if (a == L"--bg")      { kBackColor = ParseHexColor(next(i), kBackColor); handled = true; }
-        else if (a == L"--pos")     { if (auto v = next(i)) swscanf(v, L"%d,%d", &kPosX, &kPosY); handled = true; }
+        else if (a == L"--pos")     { if (auto v = next(i)) swscanf_s(v, L"%d,%d", &kPosX, &kPosY); handled = true; }
         else if (a == L"--hidden")  { kStartHidden = true; handled = true; }
         if (!handled) {
             std::wstring msg = L"Opcion desconocida: " + a + L"\n\n" + kHelp;
@@ -124,81 +131,6 @@ bool ParseArgs()
     return true;
 }
 
-PM_SESSION_HANDLE       g_session = nullptr;
-PM_DYNAMIC_QUERY_HANDLE g_query   = nullptr;
-std::vector<PM_QUERY_ELEMENT> g_elements;   // solo las filas activas, en orden
-std::vector<uint8_t>    g_blob;
-uint32_t                g_gpuDevice = 0;
-uint32_t                g_sysDevice = 0;
-uint32_t                g_pid       = 0;
-bool                    g_visible   = true;
-HWND                    g_hwnd      = nullptr;
-HFONT                   g_font      = nullptr;
-
-// Busca el primer adaptador grafico y el dispositivo "sistema" (CPU).
-void FindDevices()
-{
-    const PM_INTROSPECTION_ROOT* root = nullptr;
-    if (pmGetIntrospectionRoot(g_session, &root) != PM_STATUS_SUCCESS || !root) return;
-    for (size_t i = 0; i < root->pDevices->size; ++i) {
-        auto d = static_cast<const PM_INTROSPECTION_DEVICE*>(root->pDevices->pData[i]);
-        if (d->type == PM_DEVICE_TYPE_GRAPHICS_ADAPTER && g_gpuDevice == 0) g_gpuDevice = d->id;
-        if (d->type == PM_DEVICE_TYPE_SYSTEM && g_sysDevice == 0) g_sysDevice = d->id;
-    }
-    pmFreeIntrospectionRoot(root);
-}
-
-uint32_t DeviceFor(PM_DEVICE_TYPE t)
-{
-    if (t == PM_DEVICE_TYPE_GRAPHICS_ADAPTER) return g_gpuDevice;
-    if (t == PM_DEVICE_TYPE_SYSTEM) return g_sysDevice;
-    return 0;
-}
-
-// Registra la consulta con las filas activas. Si el servicio la rechaza,
-// desactiva la ultima fila de hardware y reintenta (FPS siempre queda).
-bool RegisterQuery()
-{
-    for (;;) {
-        g_elements.clear();
-        for (auto& r : g_rows) {
-            if (!r.active) continue;
-            PM_QUERY_ELEMENT e{};
-            e.metric     = r.metric;
-            e.stat       = PM_STAT_AVG;
-            e.deviceId   = DeviceFor(r.dev);
-            e.arrayIndex = 0;
-            g_elements.push_back(e);
-        }
-        if (g_query) { pmFreeDynamicQuery(g_query); g_query = nullptr; }
-        auto st = pmRegisterDynamicQuery(g_session, &g_query, g_elements.data(),
-                                         g_elements.size(), double(kRefreshMs), 0.0);
-        if (st == PM_STATUS_SUCCESS) {
-            size_t size = 0;
-            for (auto& e : g_elements) size = max(size, size_t(e.dataOffset + e.dataSize));
-            g_blob.assign(size, 0);
-            return true;
-        }
-        // quitar la ultima fila de hardware activa y reintentar
-        bool dropped = false;
-        for (int i = kRows - 1; i >= 1; --i) {
-            if (g_rows[i].active) { g_rows[i].active = false; dropped = true; break; }
-        }
-        if (!dropped) return false;
-    }
-}
-
-bool InitPresentMon()
-{
-    if (pmOpenSession(&g_session) != PM_STATUS_SUCCESS) return false;
-    FindDevices();
-    for (auto& r : g_rows) {
-        if (r.dev != PM_DEVICE_TYPE_INDEPENDENT && DeviceFor(r.dev) == 0) r.active = false;
-    }
-    pmSetTelemetryPollingPeriod(g_session, 0, 500);
-    return RegisterQuery();
-}
-
 // Sigue a la ventana en primer plano (el juego). Ignora la propia ventana.
 void UpdateTarget()
 {
@@ -206,25 +138,21 @@ void UpdateTarget()
     if (!fg || fg == g_hwnd) return;
     DWORD pid = 0;
     GetWindowThreadProcessId(fg, &pid);
-    if (pid == 0 || pid == GetCurrentProcessId() || pid == g_pid) return;
-    if (g_pid) pmStopTrackingProcess(g_session, g_pid);
-    g_pid = (pmStartTrackingProcess(g_session, pid) == PM_STATUS_SUCCESS) ? pid : 0;
+    if (pid == 0 || pid == GetCurrentProcessId()) return;
+    g_pid = pid;
 }
 
 void Poll()
 {
-    for (auto& r : g_rows) r.value = NAN;
-    if (!g_pid || !g_query) return;
-    uint32_t swapChains = 1;
-    if (pmPollDynamicQuery(g_query, g_pid, g_blob.data(), &swapChains) != PM_STATUS_SUCCESS || swapChains == 0)
-        return;
-    size_t k = 0;
+    g_hw.Poll();
     for (auto& r : g_rows) {
         if (!r.active) continue;
-        double v = 0;
-        memcpy(&v, g_blob.data() + g_elements[k].dataOffset, sizeof v);
-        r.value = v;
-        ++k;
+        switch (r.source) {
+        case Source::Fps:     r.value = g_pid ? g_fps.GetFps(g_pid, kRefreshMs / 1000.0) : NAN; break;
+        case Source::GpuUse:  r.value = g_hw.GpuUsePercent(); break;
+        case Source::GpuTemp: r.value = g_hw.GpuTempC(); break;
+        case Source::CpuUse:  r.value = g_hw.CpuUsePercent(); break;
+        }
     }
 }
 
@@ -240,10 +168,11 @@ void Paint(HDC dc, RECT rc)
     for (auto& r : g_rows) {
         if (!r.active) continue;
         wchar_t line[64];
-        if (std::isnan(r.value) || r.value <= 0.0)
-            swprintf(line, 64, L"%-9s  --", r.label);
+        const bool noData = std::isnan(r.value) || (r.source == Source::Fps && r.value <= 0.0);
+        if (noData)
+            swprintf_s(line, L"%-9s  --", r.label);
         else
-            swprintf(line, 64, L"%-9s%4.0f%s", r.label, r.value, r.unit);
+            swprintf_s(line, L"%-9s%4.0f%s", r.label, r.value, r.unit);
         TextOutW(dc, 6, y, line, int(wcslen(line)));
         y += kFontPx + 3;
     }
@@ -283,15 +212,26 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
     if (!ParseArgs()) return 0;
+
+    // hardware: desactivar filas que esta máquina no puede ofrecer
+    g_hw.Init();
+    for (auto& r : g_rows) {
+        if (r.source == Source::GpuUse && !g_hw.HasGpuUse()) r.active = false;
+        if (r.source == Source::GpuTemp && !g_hw.HasGpuTemp()) r.active = false;
+    }
+
+    // FPS: sesión ETW (requiere administrador)
+    bool wantFps = false; for (auto& r : g_rows) wantFps |= (r.source == Source::Fps && r.active);
+    if (wantFps) {
+        std::wstring err;
+        if (!g_fps.Start(err)) {
+            MessageBoxW(nullptr, err.c_str(), L"minimal-fps", MB_ICONERROR);
+            return 1;
+        }
+    }
+
     bool any = false; for (auto& r : g_rows) any |= r.active;
     if (!any) { MessageBoxW(nullptr, L"No queda ninguna fila activa.", L"minimal-fps", MB_ICONERROR); return 1; }
-    if (!InitPresentMon()) {
-        MessageBoxW(nullptr,
-            L"No se pudo conectar al servicio de PresentMon.\n"
-            L"Verifica que Intel PresentMon este instalado y el servicio PresentMonService corriendo.",
-            L"minimal-fps", MB_ICONERROR);
-        return 1;
-    }
 
     WNDCLASSW wc{};
     wc.lpfnWndProc   = WndProc;
@@ -311,7 +251,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     g_hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         wc.lpszClassName, L"minimal-fps", WS_POPUP,
-        kPosX, kPosY, int(width), height, nullptr, nullptr, hInst, nullptr);
+        kPosX, kPosY, width, height, nullptr, nullptr, hInst, nullptr);
     SetLayeredWindowAttributes(g_hwnd, 0, kAlpha, LWA_ALPHA);
     g_visible = !kStartHidden;
     ShowWindow(g_hwnd, g_visible ? SW_SHOWNOACTIVATE : SW_HIDE);
@@ -323,9 +263,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
 
-    if (g_pid) pmStopTrackingProcess(g_session, g_pid);
-    if (g_query) pmFreeDynamicQuery(g_query);
-    pmCloseSession(g_session);
+    g_fps.Stop();
     DeleteObject(g_font);
     return 0;
 }

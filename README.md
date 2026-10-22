@@ -1,8 +1,8 @@
 # minimal-fps
 
-Visor mínimo de FPS y uso de hardware para Windows. Un solo ejecutable, sin
-instalar nada más: texto plano siempre encima de la ventana activa, sin
-interfaz ni archivos de configuración.
+An ultra-lightweight FPS and hardware usage overlay for Windows. A single tiny
+executable with no UI, no config files and no background services: plain text
+that stays on top of the active window and nothing else.
 
 ```
 FPS        91
@@ -11,46 +11,47 @@ GPU TEMP  63C
 CPU USE   41%
 ```
 
-Es una versión ligera basada en [Intel PresentMon](https://github.com/GameTechDev/PresentMon):
-incorpora su librería PresentData para contar frames por ETW y la combina con
-una ventana propia y lecturas directas de GPU (ADL en AMD, NVML en NVIDIA) y CPU.
+It is a stripped-down take on [Intel PresentMon](https://github.com/GameTechDev/PresentMon):
+it embeds the PresentData library to count frames via ETW and pairs it with its
+own window and direct GPU (ADL on AMD, NVML on NVIDIA) and CPU readings. No
+runtime, no framework, no dependencies beyond Windows itself.
 
-## Uso
+## Usage
 
-Ejecuta `minimal-fps.exe`. Pide permisos de administrador porque la captura de
-FPS usa una sesión ETW. Sigue a la ventana que tenga el foco, así que basta con
-abrir el juego.
+Run `minimal-fps.exe`. It asks for administrator rights because FPS capture
+uses an ETW session. It follows whichever window has focus, so just launch
+your game.
 
-| Atajo      | Acción          |
-|------------|-----------------|
-| Ctrl+Alt+O | mostrar/ocultar |
-| Ctrl+Alt+Q | salir           |
+| Shortcut   | Action      |
+|------------|-------------|
+| Ctrl+Alt+O | show / hide |
+| Ctrl+Alt+Q | quit        |
 
-Para que arranque con Windows, crea una tarea programada con privilegios
-elevados o un acceso directo en `shell:startup`.
+To start it with Windows, create a scheduled task with elevated privileges or
+drop a shortcut into `shell:startup`.
 
-## Opciones
+## Options
 
 ```
-minimal-fps [opciones]
+minimal-fps [options]
 
-Filas (por defecto todas activas):
+Rows (all enabled by default):
   --no-fps  --no-gpu-use  --no-gpu-temp  --no-cpu-use
-  --only fps,gpu-use,gpu-temp,cpu-use   muestra solo las indicadas
+  --only fps,gpu-use,gpu-temp,cpu-use   show only the listed rows
 
-Apariencia:
-  --refresh <ms>      intervalo de actualización (defecto 2000)
-  --size <px>         tamaño de fuente (defecto 15)
-  --font <nombre>     fuente (defecto Consolas)
-  --alpha <0-255>     opacidad (defecto 190)
-  --color <RRGGBB>    color del texto (defecto FFFFFF)
-  --bg <RRGGBB>       color de fondo (defecto 000000)
-  --pos <x,y>         posición en pantalla (defecto 8,8)
-  --hidden            iniciar oculto
-  --help              ayuda
+Appearance:
+  --refresh <ms>      update interval (default 2000)
+  --size <px>         font size (default 15)
+  --font <name>       font (default Consolas)
+  --alpha <0-255>     opacity (default 190)
+  --color <RRGGBB>    text color (default FFFFFF)
+  --bg <RRGGBB>       background color (default 000000)
+  --pos <x,y>         screen position (default 8,8)
+  --hidden            start hidden
+  --help              help
 ```
 
-Ejemplos:
+Examples:
 
 ```
 minimal-fps --only fps
@@ -58,15 +59,15 @@ minimal-fps --no-cpu-use --size 18 --alpha 230
 minimal-fps --only fps,gpu-temp --color 00FF66 --pos 20,20 --refresh 1000
 ```
 
-Las filas de GPU se ocultan solas si el driver no expone el dato. Si no hay
-driver AMD ni NVIDIA, el uso de GPU se lee de los contadores de rendimiento de
-Windows y la temperatura no se muestra.
+GPU rows hide themselves when the driver does not expose the value. Without an
+AMD or NVIDIA driver, GPU usage falls back to Windows performance counters and
+temperature is not shown.
 
-## Compilar
+## Building
 
-Requisitos: Visual Studio 2022 (Build Tools o completo) con el workload
-"Desarrollo para el escritorio con C++" y CMake (incluido en el componente
-"C++ CMake tools for Windows").
+Requirements: Visual Studio 2022 (Build Tools or full) with the "Desktop
+development with C++" workload and CMake (bundled in the "C++ CMake tools for
+Windows" component).
 
 ```
 git clone https://github.com/monki-nx/minimal-fps.git
@@ -74,17 +75,17 @@ cd minimal-fps
 build.cmd
 ```
 
-Resultado: `build\Release\minimal-fps.exe`, sin dependencias fuera de Windows.
+Output: `build\Release\minimal-fps.exe`, with no dependencies outside Windows.
 
-## Estructura
+## Layout
 
 ```
-src/            ventana, línea de comandos, FPS por ETW, métricas de hardware
-third_party/    PresentData de Intel PresentMon y headers ADL de AMD (ver NOTICE.md)
-CMakeLists.txt  build con CMake + MSVC
-build.cmd       envoltorio que localiza Visual Studio y compila
+src/            window, command line, ETW-based FPS, hardware metrics
+third_party/    PresentData from Intel PresentMon and AMD ADL headers (see NOTICE.md)
+CMakeLists.txt  CMake + MSVC build
+build.cmd       wrapper that locates Visual Studio and builds
 ```
 
-## Licencia
+## License
 
-MIT. El código de terceros conserva sus licencias, ver `third_party/NOTICE.md`.
+MIT. Third-party code keeps its own licenses, see `third_party/NOTICE.md`.
